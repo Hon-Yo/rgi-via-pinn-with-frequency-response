@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 554" role="img" aria-labelledby="title description" font-family="system-ui,sans-serif" font-size="14" style="color-scheme:light dark;color:var(--fg, currentColor)">
+<title id="title">Room inference: shared model path and training-only feedback</title>
+<desc id="description">Four grouped stages map the README boxes to preprocessing, CNN, intermediate matching and topology, and geometry construction. Training adds simulation, the spectral integral, supervised loss, and a feedback loop to the CNN.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="currentColor"/></marker></defs>
+<g fill="none" stroke="currentColor" stroke-width="1.5">
+  <rect x="20" y="60" width="220" height="184" rx="12"/><rect x="260" y="60" width="220" height="184" rx="12"/><rect x="500" y="60" width="220" height="184" rx="12"/><rect x="740" y="60" width="220" height="184" rx="12"/>
+  <rect x="20" y="353" width="220" height="140" rx="12"/><rect x="260" y="353" width="220" height="140" rx="12"/><rect x="500" y="353" width="220" height="140" rx="12"/><rect x="740" y="353" width="220" height="140" rx="12"/>
+</g>
+<g fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow)">
+  <path d="M240 156H260"/><path d="M480 156H500"/><path d="M720 156H740"/>
+  <path d="M130 244V294H370V353"/>
+  <path d="M850 244V294H610V353"/>
+  <path d="M500 427H480"/><path d="M260 427H240"/>
+  <path d="M850 493V530H130V493"/>
+  <path d="M20 427H8V40H370V60" stroke-dasharray="5 4"/>
+</g>
+<g fill="currentColor">
+  <text x="20" y="24" font-weight="700">WAV-TO-GEOMETRY PATH</text>
+  <text x="382" y="45" font-size="13">Next training batch uses updated CNN weights</text>
+  <text x="34" y="87" font-weight="700">1 · Preprocessing</text>
+  <text x="34" y="117">Exact sweep + mic WAV</text><text x="34" y="141">Alignment and deconvolution</text><text x="34" y="165">Complex transfer and RIR</text><text x="34" y="189">Calibration, mask and dB grid</text><text x="34" y="219" font-size="13">Or import external MATLAB features</text>
+  <text x="274" y="87" font-weight="700">2 · CNN</text>
+  <text x="274" y="117">Apply saved standardization</text><text x="274" y="141">Conv1d blocks → flatten</text><text x="274" y="165">Plane and presence heads</text><text x="274" y="189">Elevation and successor heads</text>
+  <text x="514" y="87" font-weight="700">3 · Intermediate calculation</text>
+  <text x="514" y="117" font-weight="600">Inference</text><text x="514" y="138">Select and order predicted walls</text><text x="514" y="174" font-weight="600">Physics training</text><text x="514" y="195">Match to surveyed walls;</text><text x="514" y="216">use the surveyed wall order</text>
+  <text x="754" y="87" font-weight="700">4 · Construct the shell</text>
+  <text x="754" y="117">Intersect consecutive planes</text><text x="754" y="141">Validate the footprint</text><text x="754" y="165">Use predicted floor and ceiling</text><text x="754" y="208" font-weight="600">Inference ends here:</text><text x="754" y="229">geometry or invalid status</text>
+  <text x="145" y="283" font-size="13">Measured dB + mask</text><text x="639" y="283" font-size="13">Valid training shell</text>
+  <text x="20" y="333" font-weight="700">TRAINING ONLY</text>
+  <text x="514" y="379" font-weight="700">5 · Simulate acoustics</text><text x="514" y="410">Predicted shell + registered pose</text><text x="514" y="434">PyRoomAcoustics → impulse</text><text x="514" y="457">response → simulated dB</text>
+  <text x="274" y="379" font-weight="700">6 · Compare spectra</text><text x="274" y="410">Integrate absolute dB error</text><text x="274" y="434">over the valid frequency band</text><text x="274" y="457">Normalize by valid bandwidth</text>
+  <text x="754" y="379" font-weight="700">Supervised loss</text><text x="754" y="410">Compare CNN candidates</text><text x="754" y="434">with surveyed geometry</text><text x="754" y="457">using Hungarian matching</text>
+  <text x="34" y="379" font-weight="700">7 · Update CNN weights</text><text x="34" y="410">Supervised + λ × spectral loss</text><text x="34" y="434">Finite differences provide</text><text x="34" y="457">the simulator gradient</text>
+</g>
+</svg>

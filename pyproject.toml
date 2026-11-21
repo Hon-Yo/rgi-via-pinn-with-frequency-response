@@ -1,0 +1,20 @@
+[project]
+name = "rgi-via-pinn-with-frequency-response"
+version = "0.1.0"
+description = "Research pipeline for acoustic inference of vertical room shells"
+readme = "README.md"
+requires-python = ">=3.14,<3.15"
+dependencies = [
+    "matplotlib>=3.10",
+    "numpy>=2.3",
+    "pyroomacoustics==0.10.1",
+    "scipy>=1.16",
+    "shapely>=2.1",
+    "torch>=2.10",
+]
+
+[dependency-groups]
+dev = ["pytest>=9"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
