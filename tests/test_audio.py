@@ -221,3 +221,45 @@ def test_npz_and_mat_round_trip_and_validation(filter_wavs, tmp_path):
     savemat(mat, {**mat_data, "valid_mask": np.full_like(baseline.magnitude_db, 0.5)})
     with pytest.raises(ValueError, match="0/1"):
         load_feature(mat, config)
+
+
+def test_measured_manifest_uses_cover_for_matching_device(filter_wavs, tmp_path):
+    from dataclasses import asdict
+    from pathlib import Path
+    import subprocess
+    import sys
+
+    from rgi.config import write_json
+
+    audio, exc, rec, _, marker = filter_wavs
+    rate, signal_open = wavfile.read(rec)
+    wavfile.write(tmp_path / "covered.wav", rate, signal_open * 0.5)
+    write_json(tmp_path / "shell.json", {"footprint": [[0, 0], [3, 0], [3, 4], [0, 4]], "floor": 0, "ceiling": 3})
+    config_path = tmp_path / "config.json"
+    write_json(config_path, {"audio": asdict(audio)})
+    recording = {"excitation": exc.name, "recording": rec.name, "excitation_channel": 0, "recording_channel": 0,
+                 "excitation_rate": rate, "recording_rate": rate, "sweep_start_seconds": marker / rate,
+                 "sweep_start_hz": 140, "sweep_end_hz": 3300, "sweep_duration_s": 0.4,
+                 "recording_duration_s": len(signal_open) / rate}
+    covering = {"id": "cloth", "version": "v1", "method": "cloth", "settings": "matched",
+                "propagation": "empirical", "reference_audio": {**recording, "recording": "covered.wav"}}
+    measurement = {"room_id": "room", "measurement_id": "room-take", "session_id": "session",
+                   "device_config_id": "device", "take_id": "1", "audio": recording,
+                   "device": {"playback": "speaker", "recording": "mic", "routing": "isolated", "microphone": "mic",
+                              "output_volume": 1, "microphone_gain": 1, "enhancements": {}},
+                   "pose": {"registration": "room", "receiver": None, "sources": [], "gains": [],
+                            "orientation": 0, "lid": 100, "physics_approved": False},
+                   "geometry": {"path": "shell.json", "meters_per_scan_unit": 1, "coordinate_frame": "room", "winding": "CCW"},
+                   "conditions": {"furniture": "none", "doors_windows": "closed", "temperature_c": None,
+                                  "recording_problems": None}}
+    manifest, out = tmp_path / "manifest.json", tmp_path / "dataset"
+    cli = Path(__file__).resolve().parents[1] / "main.py"
+    command = [sys.executable, str(cli), "preprocess", str(manifest), str(out), "--config", str(config_path)]
+    write_json(manifest, {"covered_references": {"other-device": covering}, "measurements": [measurement]})
+    rejected = subprocess.run(command, capture_output=True, text=True)
+    assert rejected.returncode == 2 and "missing covered laptop reference" in rejected.stderr
+    write_json(manifest, {"covered_references": {"device": covering}, "measurements": [measurement]})
+    subprocess.run(command, check=True, capture_output=True, text=True)
+    feature = load_feature(out / "features/000000.npz", audio)
+    assert feature.calibration == "covered"
+    np.testing.assert_allclose(feature.magnitude_db[feature.valid_mask], 20 * np.log10(2), atol=1e-8)

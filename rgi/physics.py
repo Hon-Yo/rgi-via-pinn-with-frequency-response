@@ -11,6 +11,8 @@ import torch
 from .audio import AudioConfig, Feature, spectral_magnitude, spectrum_from_rir
 from .geometry import Shell, decode
 
+PHYSICS_CALIBRATIONS = frozenset({"none", "complex", "covered"})
+
 
 @dataclass(frozen=True)
 class SimulatorConfig:
@@ -90,8 +92,8 @@ def comparable_alignment(feature: Feature) -> bool:
 
 
 def simulated_magnitude(shell, pose, feature, audio, settings):
-    if feature.calibration not in ("none", "complex"):
-        raise ValueError("reference-relative magnitudes have no equivalent simulator reference")
+    if feature.calibration not in PHYSICS_CALIBRATIONS:
+        raise ValueError("calibration has no room-only simulator target")
     if not comparable_alignment(feature):
         raise ValueError("simulator comparison requires documented marker or correlation alignment")
     rir = simulate_rir(shell, pose, audio, settings,
@@ -128,6 +130,7 @@ class AcousticObjective:
         self.calls += 1
         start = perf_counter()
         try:
+            # Covered calibration assumes the reference dB subtraction already removed the laptop response.
             simulated = simulated_magnitude(shell, self.pose, self.feature, self.audio, self.simulator)
             return spectral_error(simulated, self.feature.magnitude_db, self.feature.valid_mask, self.delta_hz)
         finally:

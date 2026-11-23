@@ -11,7 +11,7 @@ from .audio import process_wavs
 from .config import Config, write_json
 from .data import feature_signature, load_dataset, reference_feature, validate_split
 from .model import RoomCNN, supervised_loss
-from .physics import AcousticObjective, comparable_alignment, matched_geometry, physics_loss
+from .physics import PHYSICS_CALIBRATIONS, AcousticObjective, comparable_alignment, matched_geometry, physics_loss
 from .report import decode_prediction, plot_geometry, plot_spectrum, predictions, score, summarize, tune_threshold
 
 
@@ -66,7 +66,7 @@ def _require_signature(examples, signature):
 
 def _eligible(example):
     return (example.pose is not None and example.record["pose"].get("physics_approved")
-            and example.feature.calibration in ("none", "complex") and comparable_alignment(example.feature))
+            and example.feature.calibration in PHYSICS_CALIBRATIONS and comparable_alignment(example.feature))
 
 
 def _physics_batch(prediction, matches, examples, config, stats):
@@ -100,6 +100,8 @@ def _physics_batch(prediction, matches, examples, config, stats):
 
 def train(index, config, split, output, *, init=None):
     examples = load_dataset(index, config.audio)
+    if any(ex.record["origin"] == "measured" and ex.feature.calibration != "covered" for ex in examples):
+        raise ValueError("rerun preprocess with the covered laptop references before training on measured data")
     validate_split(split, (example.room_id for example in examples))
     if any(len(ex.shell.footprint) > config.model.max_walls for ex in examples):
         raise ValueError("dataset has a shell exceeding the candidate wall limit")
@@ -110,7 +112,8 @@ def train(index, config, split, output, *, init=None):
     validation = [example for example in examples if example.room_id in val_rooms]
     settings = config.training
     if settings.physics_weight and (settings.epochs <= settings.physics_warmup_epochs or not any(map(_eligible, training))):
-        raise ValueError("nonzero physics weight requires a post-warmup epoch and an eligible training measurement")
+        raise ValueError("nonzero physics weight requires a post-warmup epoch and a training measurement "
+                         "with a registered pose approved for physics, supported calibration, and known alignment")
     seed = settings.seed
     torch.manual_seed(seed)
     torch.set_num_threads(settings.cpu_threads)

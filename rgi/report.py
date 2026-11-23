@@ -146,6 +146,24 @@ def plot_geometry(path, result, shell, reference=None):
     _save_figure(fig, path)
 
 
+def plot_scan_shell(path, shell, traces, inside):
+    fig, axes = plt.subplots(figsize=(8, 6), layout="constrained")
+    labeled = set()
+    for _, xy, agrees in traces:
+        label = "Agreeing scan slices" if agrees else "Rejected closed slices"
+        axes.plot(*xy.T, color="0.5" if agrees else "tab:red", alpha=0.45, linestyle="--",
+                  label=label if label not in labeled else None)
+        labeled.add(label)
+    boundary = np.vstack((shell.footprint, shell.footprint[0]))
+    axes.plot(*boundary.T, color="tab:blue", linewidth=2, label="Extracted wall footprint")
+    for i, pillar in enumerate(shell.pillars):
+        axes.fill(*pillar.footprint.T, color="tab:orange", alpha=0.35, label="Annotated pillar" if i == 0 else None)
+    axes.plot(*inside, marker="x", color="tab:green", label="Interior seed")
+    axes.set(xlabel="x (m)", ylabel="y (m)", aspect="equal", title="Review extracted room shell against scan slices")
+    axes.legend()
+    _save_figure(fig, path)
+
+
 def plot_spectrum(path, example, shell, audio, simulator):
     fig, axes = plt.subplots(figsize=(9, 4), layout="constrained")
     feature = example.feature

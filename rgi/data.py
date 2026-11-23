@@ -47,7 +47,6 @@ def _validate_record(record):
         "pose": ("registration", "receiver", "sources", "gains", "orientation", "lid", "physics_approved"),
         "geometry": ("path", "meters_per_scan_unit", "coordinate_frame", "winding"),
         "conditions": ("furniture", "doors_windows", "temperature_c", "recording_problems"),
-        "calibration": ("mode",),
     }
     for group, keys in required.items():
         missing = set(keys) - record.get(group, {}).keys()
@@ -73,10 +72,9 @@ def _validate_record(record):
     elif pose["physics_approved"]:
         raise ValueError("physics-approved measurements need a registered pose")
     calibration = record["calibration"]
-    if calibration["mode"] not in ("none", "complex", "magnitude", "covered"):
-        raise ValueError("unknown calibration mode")
-    if calibration["mode"] != "none" and not all(calibration.get(key) for key in
-            ("id", "method", "settings", "propagation", "version")):
+    if calibration["mode"] != "covered":
+        raise ValueError("measured training data requires covered calibration")
+    if not all(calibration.get(key) for key in ("id", "method", "settings", "propagation", "version")):
         raise ValueError("calibration requires id, method, settings, propagation assumptions, and version")
 
 
@@ -108,13 +106,19 @@ def _write_dataset(output, config, records, **details):
 
 def preprocess(manifest, output, config):
     manifest, output = Path(manifest).resolve(), Path(output)
-    records = read_json(manifest)["measurements"]
+    contents = read_json(manifest)
+    records = contents["measurements"]
+    covered_references = contents.get("covered_references", {})
     if not records:
         raise ValueError("manifest contains no measurements")
     ids = set()
     stored = []
     for i, record in enumerate(records):
         try:
+            calibration = record.get("calibration", covered_references.get(record.get("device_config_id")))
+            if calibration is None:
+                raise ValueError("missing covered laptop reference for this device_config_id")
+            record = {**record, "calibration": {"mode": "covered", **calibration}}
             _validate_record(record)
             measurement_id = record["measurement_id"]
             if measurement_id in ids:

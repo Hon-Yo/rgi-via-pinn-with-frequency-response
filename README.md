@@ -1,6 +1,6 @@
 # Acoustic room geometry inference
 
-Research prototype for inferring a vertical **room shell** from one laptop-recorded sweep. It predicts wall planes and finite boundary faces, not furniture or freestanding pillars. Audacity acquisition and RealityScan registration/annotation are manual. The remaining steps are scripted.
+Research prototype for inferring a vertical **room shell** from one laptop-recorded sweep. It predicts wall planes and finite boundary faces, not furniture or freestanding pillars. Audacity acquisition and RealityScan registration are manual. A registered OBJ can be converted to a draft shell label for review.
 
 ## Architecture
 
@@ -64,31 +64,51 @@ After collecting and annotating takes:
 
 ```sh
 uv run main.py preprocess capture/manifest.json runs/measured --config runs/config.json
-uv run main.py train runs/measured/dataset.json runs/baseline --config runs/config.json --init runs/pretrain/best.pt
-uv run main.py evaluate runs/measured/dataset.json runs/baseline/best.pt runs/baseline-test
-uv run main.py infer capture/sweep.wav capture/take.wav runs/baseline/best.pt runs/inference --excitation-channel 0 --recording-channel 0
+uv run main.py train runs/measured/dataset.json runs/covered-model --config runs/physics-config.json --init runs/pretrain/best.pt
+uv run main.py evaluate runs/measured/dataset.json runs/covered-model/best.pt runs/covered-validation --split validation
+uv run main.py infer capture/sweep.wav capture/take.wav runs/covered-model/best.pt runs/inference --excitation-channel 0 --recording-channel 0 --calibration capture/covered.json
 ```
 
 Omit `--init` for direct real-data training. Fine-tuning initializes weights only and fits standardization again on the new training rooms. Keep consistent physical room IDs across datasets: pretraining is rejected if a prior training or validation room appears in the new holdouts. For leave-one-room-out, rerun with `--test-room ROOM` and choose a disjoint `--val-room ROOM`; tune only inside each fold's training/validation partition. Without explicit room IDs, the seeded split holds out roughly 20% of rooms each for validation and test. At least three distinct rooms are required.
 
-For a physics comparison, copy the baseline config and set `training.physics_weight` to a moderate nonzero value (for example `0.005` as a pilot starting point, not a tuned value). Use the same architecture, initialization, preprocessing, and split. Compare held-out `metrics.json` files; inspect `history.json` for actual physics coverage.
+To use physics loss, copy `runs/config.json` to `runs/physics-config.json` and set `training.physics_weight` to a positive value (e.g. `0.005` for a first trial). Measured training compares the **covered-corrected dB spectrum** directly to the simulated room spectrum, assuming the covered reference removes the laptop's response. The correction is not applied a second time to the simulation. Simulation needs a registered source and microphone pose marked `physics_approved: true`, plus known audio alignment. Preprocessing and training must use identical audio settings.
 
 Use a new output directory for each training run. With nonzero λ, only epochs after at least one successful physics example can produce `best.pt`; if none qualify, training writes its history and reports an error instead of emitting a supervised checkpoint labeled as combined.
 
-```sh
-uv run main.py train runs/measured/dataset.json runs/combined --config runs/physics-config.json --init runs/pretrain/best.pt --split-file runs/baseline/split.json
-uv run main.py evaluate runs/measured/dataset.json runs/combined/best.pt runs/combined-test
-uv run main.py pilot runs/measured/dataset.json runs/pilot.json repeat1 repeat2 moved1 moved2 --config runs/config.json --checkpoint runs/baseline/best.pt
-```
+### Selecting the physics weight
 
-`pilot` compares within-arrangement repeats against furniture changes, optionally checking prediction stability. With a registered pose marked suitable for simulation, it reports observed-vs-surveyed-shell spectral mismatch and sensitivity to ±2 cm pose translations. Collect pilot takes at a fixed pose/device configuration. The measured pipeline does not establish laptop response bandwidth, calibrated accuracy, or generalization without real held-out recordings.
+Tune λ using **validation geometry**, not the total training loss (changing λ changes the objective) or the numerical sizes of the two loss terms. Try a coarse logarithmic grid such as `0`, `0.0005`, `0.005`, and `0.05`, then refine around the best positive weight if useful. The `0` trial uses the exact same **corrected** spectra; it only omits simulation. Do not treat these values as universal.
+
+Reuse the same `--split-file`, initialization, seed, audio settings, and training budget, with a new output directory per trial. Use `evaluate ... --split validation` to compare room-macro footprint IoU (invalid shells count as zero), validity, and wall/height errors. With few rooms, repeat across grouped validation folds if possible. Check `history.json` for physics coverage after warmup; a weight with few valid simulation steps has not had much opportunity to affect training. Leave test rooms untouched until λ is selected. Optionally use gradient norms on shared CNN parameters to choose the initial search range: λ scales the physics **gradient**, so comparable loss values alone do not imply comparable updates.
+
+`pilot` compares within-arrangement repeats against furniture changes, optionally checking prediction stability. With a registered pose marked suitable for simulation, it reports observed-vs-surveyed-shell spectral mismatch and sensitivity to ±2 cm pose translations. Collect pilot takes at a fixed pose/device configuration.
 
 ## Capture and annotations
 
-- Export the exact digital stimulus and untouched microphone WAVs, including silence and the full tail. Keep takes and original channels. Use PCM or float WAV, fixed moderate playback/gain, and disable or log AGC, suppression, audio effects and equalization. Channel indices are zero based.
+- Export three WAVs: `sweep.wav` is the generated Audacity sine sweep track by itself (the input sent to the speaker); `take.wav` is the laptop mic recording made while that sweep plays uncovered in the room; `covered.wav` is a separate mic recording while the same sweep plays with the laptop covered. Export the mic tracks separately, not mixed with the generated track. Retain silence and the reverberation tail. Do not normalize, EQ, denoise or subtract the raw WAVs. Use the same routing and gain and keep original channels (zero-based indices).
 - `isolated` means one active speaker. `coherent` means all active speakers play scaled copies of the same sweep. Use signed linear `gains` and registered XYZ for each speaker; different waveforms per speaker are not handled by the single-input deconvolution. Select a stable recording channel.
 - Record metric geometry in a consistent device-oriented frame when possible (e.g. microphone projected to XY origin, x along laptop heading, z up, a documented z datum). Apply the same registration to the source/mic positions. Inference does not get a separate pose input; a magnitude response does not generally identify an arbitrary global origin/orientation. Evaluation uses the annotated frame with no alignment or symmetry bonus.
 - Save a closed-shell annotation as an **implicitly closed, CCW** XY footprint with no repeated endpoint or redundant collinear vertices. The wall between each vertex and its successor is one slot. Trace wall-attached protrusions as part of this boundary. Record freestanding pillars separately and exclude furniture. All elevations below are absolute z in meters.
+
+### Convert a room scan to a training label
+
+Keep the original OBJ untouched. The model needs a separate JSON label: an ordered perimeter, floor and ceiling elevations, and any separate pillar annotations. The converter writes the footprint plus each wall's outward unit plane `[nx, ny, 0, d]`, finite face vertices, and neighbors.
+
+```sh
+uv run main.py obj-to-shell capture/room.obj capture/geometry.json --meters-per-unit 1 --up-axis z --floor 0 --ceiling 2.7 --inside 0 0
+```
+
+Use your measured scale, up-axis, elevations, and a clear point inside the room. For centimeter coordinates use `--meters-per-unit 0.01`. If needed, pass `--registration` a JSON 4×4 rigid transform from the scaled, Z-up OBJ into your label frame. The converter applies scale, then up-axis conversion, then that transform. `--floor`, `--ceiling`, and `--inside` are in the **final frame**, as are the speaker and microphone coordinates in the manifest. Export triangles or planar convex quads.
+
+**Verify the scale of each OBJ.**
+
+Do not assume RealityScan and Scaniverse exports use the same units. OBJ does not declare a standard distance unit. Use a tape or laser measure for a long span between two identifiable points in the room, measure the same points on the exported mesh, and compute `meters_per_unit = measured_meters / mesh_distance`. For example, `4.20 m / 420 OBJ units = 0.01 m per OBJ unit`. Use one scale per export and cross-check against an independent span (ideally perpendicular) and the ceiling height. If the ratios disagree materially, check point selection and scan distortion instead of scaling each axis independently.
+
+For future scans, mark fixed endpoints or use a rigid scale bar visible in the scan. Keep a record of the measured and mesh distances. After scaling, register the mesh to a level, Z-up frame and locate the laptop speaker(s) and microphone in that same frame. For an existing recording, reconstruct the pose from its measured distances to walls, height above the floor, and heading; if the position cannot be recovered reliably, leave `physics_approved: false` for that take. Scale changes the supervised wall distances and the simulated sound travel times, so a visually plausible footprint is not enough.
+
+The converter takes five horizontal sections by default, connects their linework into closed outlines, and requires a majority to agree before writing a label. This preserves recesses instead of taking a convex hull. Review the adjacent `geometry.svg` against the OBJ and surveyed dimensions before training. An open doorway, merged rooms, wall-attached clutter, or heavy scan gaps can prevent a reliable outline or produce the wrong one. `--slice-fractions` selects alternate heights; `--max-gap-m` optionally bridges only short seams (off by default). If the extracted outline is wrong, trace the footprint manually rather than increasing tolerances until a label passes. Point `geometry.path` in the manifest at the reviewed JSON.
+
+Interior loops are not assumed to be pillars. Pass `--pillars-json` a JSON array of known rectangular pillars in the same frame, using the `pillars` format below. A pillar attached to a wall should instead be part of the perimeter if it changes the room boundary. Furniture boxes are not extracted or consumed by this model. Given one mesh per object, fitting a box is simple; separating furniture instances from an unsegmented room scan, especially where they touch walls or one another, is the harder problem.
 
 Example `capture/geometry.json`:
 
@@ -129,7 +149,6 @@ Example manifest record (put records inside `{"measurements": [...]}`; paths are
     "orientation": {"heading_deg": 0}, "lid": {"angle_deg": 105},
     "physics_approved": false
   },
-  "calibration": {"mode": "none"},
   "geometry": {"path": "geometry.json", "meters_per_scan_unit": 1, "coordinate_frame": "laptop-frame-v1", "winding": "CCW"},
   "conditions": {"furniture": "arrangement-a", "doors_windows": "closed", "temperature_c": null, "recording_problems": null}
 }
@@ -141,16 +160,45 @@ The registration reference should describe the scan-to-metric transform, laptop 
 
 Without a marker the processor starts the RIR window 5 ms before the strongest absolute sweep correlation; that peak need not be the first arrival. Phase is relative to the saved RIR start. An optional `audio.sweep_start_seconds` (CLI: `--sweep-start-seconds`) is the recording time corresponding to **sample zero of the excitation file**, not first audible sound. Set it only for a documented synchronization marker; it retains flight time. The simulator removes its fractional-delay filter's artificial offset and uses direct-arrival alignment for correlation captures. A wrong correlation peak, clock drift, unknown device delay, or a poorly surveyed pose weakens the comparison.
 
-Start with `calibration.mode: "none"`. A calibrated record also needs `id`, `method`, `settings`, `propagation` (assumptions), and `version`:
+Python can process the original Audacity WAVs directly; MATLAB is not required. For a quick single-take feature, use the exact exported playback WAV, not just the FFT magnitude of the microphone recording:
+
+```sh
+uv run main.py audio-feature capture/sweep.wav capture/take.wav runs/take.npz --excitation-channel 0 --recording-channel 0
+uv run main.py audio-feature capture/sweep.wav capture/take.wav runs/take-covered-relative.npz --excitation-channel 0 --recording-channel 0 --calibration capture/covered.json
+```
+
+`audio-feature` writes frequency bins, a valid-band mask, magnitude in dB, the complex transfer, and the impulse response. Use `preprocess` instead for the whole manifest; it does the same WAV processing in batch, so no prior `audio-feature` run is needed.
+
+Measured preprocessing requires a covered reference. In the manifest, put the covered calibration object under each measurement's `calibration`, or store it once under the top-level `covered_references` map keyed by `device_config_id`. A per-take entry overrides the shared reference. Use a separate reference for each distinct speaker/mic routing or gain configuration. Missing references fail preprocessing. The standalone audio tools also support these modes:
 
 | Mode | Reference | Result and physics eligibility |
 | --- | --- | --- |
 | `none` | — | Measured system dB; ISM omits residual device coloration |
 | `complex` | `reference_feature` with independently characterized device transfer; remove reference path propagation before supplying it | Regularized complex division; raw complex response also saved |
 | `magnitude` | `reference_feature` or `reference_audio` | Matched dB subtraction; not compared to bare ISM |
-| `covered` | Covered `reference_feature` or `reference_audio` from matching routing, gain, pose and lid | Empirical reference-relative dB; not a device inversion and not compared to bare ISM |
+| `covered` | Covered `reference_feature` or `reference_audio` from matching routing, gain, pose and lid | Reference-relative dB, treated as the room response for physics training |
 
-`reference_audio` names the reference excitation/recording paths, channels, rates and optional timing marker, using the same key names as `audio`. Reference features must carry the as-measured or independently characterized complex transfer, not an already corrected response. For inference, pass the same calibration mode/version in a separate `--calibration calibration.json`. Process uncovered and covered-relative branches separately; compare on the same physical splits without assuming cloth removes room sound.
+`reference_audio` names the reference excitation/recording paths, channels, rates and optional timing marker, using the same key names as `audio`. Paths are relative to the manifest for batch preprocessing, or the calibration JSON for standalone commands. For inference pass the matching covered reference and calibration version in `--calibration`.
+
+Example `capture/covered.json` (copy this object under `covered_references["laptop-internal-left-v1"]` for the manifest example, or set it inline under a measurement's `calibration`):
+
+```json
+{
+  "mode": "covered",
+  "id": "laptop-left-covered-01",
+  "method": "Thick-cloth comparison",
+  "settings": "Same playback routing, microphone, gain, lid angle and pose",
+  "propagation": "Empirical reference only; room and cloth may affect it",
+  "version": "cloth-v1",
+  "reference_audio": {
+    "excitation": "sweep.wav", "recording": "covered.wav",
+    "excitation_channel": 0, "recording_channel": 0,
+    "excitation_rate": 48000, "recording_rate": 48000
+  }
+}
+```
+
+Python first estimates a transfer function for **each** take using FFT-based regularized division by its excitation. It then subtracts covered transfer magnitude from uncovered transfer magnitude **in dB** on the same frequency grid, masking weak reference bins. This is a magnitude ratio, not subtraction of raw FFT magnitudes or waveforms. The cloth changes the sound path and may not eliminate reflections, so the result is not a verified room-only response. Keep the original microphone WAVs as inputs, not as a separate training baseline.
 
 For a MATLAB export, add `"feature": "take.mat"` and describe its `feature_definition` in the manifest record; keep its WAV metadata for provenance. Use `-v7` with `frequency_hz`, `magnitude_db`, `valid_mask`, `transfer_real`, `transfer_imag` as equally shaped vectors; the Hz grid must match config. Include `calibration` for corrected features, and `system_transfer_real` / `system_transfer_imag` for complex-corrected imports. An optional `alignment_method` (`marker`/`correlation`) is meaningful only with the documented matching window and alignment. The importer does not reapply calibration or transforms, so produce the identical feature definition in MATLAB. Without alignment metadata the feature is supervised-only. See the coding brief for notes on the original MATLAB scripts.
 
